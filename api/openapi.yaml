@@ -1,0 +1,288 @@
+openapi: 3.0.3
+info:
+  title: insider-signal API
+  version: 0.1.0
+  description: >-
+    Ingests Windows security events and flags risky user behaviour. This file is the source of
+    truth: controllers implement the interfaces generated from it.
+servers:
+  - url: http://localhost:8090
+tags:
+  - name: Events
+  - name: Alerts
+  - name: Users
+  - name: Rules
+paths:
+  /api/v1/events:
+    post:
+      tags: [Events]
+      operationId: ingestEvents
+      summary: Accept a batch of Windows security events for asynchronous processing
+      description: Returns 202 once the batch is durably on the event stream.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventBatch'
+      responses:
+        '202':
+          description: Batch accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestAccepted'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /api/v1/alerts:
+    get:
+      tags: [Alerts]
+      operationId: listAlerts
+      summary: List the most recent alerts, newest first
+      parameters:
+        - name: upn
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        '200':
+          description: Alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Alert'
+        '400':
+          $ref: '#/components/responses/Problem'
+  /api/v1/users/{upn}/risk:
+    get:
+      tags: [Users]
+      operationId: getUserRisk
+      summary: Get a user's current risk score and the reasons behind it
+      parameters:
+        - name: upn
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Risk score. A user with no recent alerts scores 0.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserRisk'
+  /api/v1/rules:
+    get:
+      tags: [Rules]
+      operationId: listRules
+      summary: List detection rules and their current configuration
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Rule'
+  /api/v1/rules/{ruleId}:
+    put:
+      tags: [Rules]
+      operationId: updateRule
+      summary: Replace a rule's configuration; every instance applies it without a restart
+      parameters:
+        - name: ruleId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: One of brute-force, off-hours, new-host
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RuleUpdate'
+      responses:
+        '200':
+          description: Updated rule
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+components:
+  responses:
+    Problem:
+      description: RFC 7807 problem
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    EventBatch:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/WinEvent'
+    WinEvent:
+      type: object
+      required: [eventId, eventCode, occurredAt, upn, host]
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Unique per event. Redelivering the same id is safe (idempotency key).
+        eventCode:
+          type: integer
+          format: int32
+          enum: [4624, 4625, 4728, 4732]
+          description: >-
+            Windows Security event ID. 4624 logon, 4625 failed logon, 4728 and 4732 user added to
+            a privileged group.
+        occurredAt:
+          type: string
+          format: date-time
+        upn:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: User principal name, for example alice@contoso.example. Case-insensitive.
+        host:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Computer the event was logged for. Case-insensitive.
+        targetGroup:
+          type: string
+          maxLength: 256
+          description: Group the user was added to (4728 and 4732 only).
+    IngestAccepted:
+      type: object
+      required: [accepted]
+      properties:
+        accepted:
+          type: integer
+          format: int32
+    Alert:
+      type: object
+      required: [id, ruleId, upn, severity, score, occurredAt, reason, evidenceEventIds]
+      properties:
+        id:
+          type: string
+          description: Rule id plus triggering event id, so reprocessing cannot duplicate an alert.
+        ruleId:
+          type: string
+        upn:
+          type: string
+        severity:
+          type: string
+          enum: [MEDIUM, HIGH]
+        score:
+          type: integer
+          format: int32
+        occurredAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+        evidenceEventIds:
+          type: array
+          items:
+            type: string
+    UserRisk:
+      type: object
+      required: [upn, score, reasons]
+      properties:
+        upn:
+          type: string
+        score:
+          type: integer
+          format: int32
+          minimum: 0
+          maximum: 100
+          description: Sum of recent alert scores, capped at 100.
+        reasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/RiskReason'
+    RiskReason:
+      type: object
+      required: [ruleId, score, occurredAt, reason]
+      properties:
+        ruleId:
+          type: string
+        score:
+          type: integer
+          format: int32
+        occurredAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+    Rule:
+      type: object
+      required: [id, config, updatedAt]
+      properties:
+        id:
+          type: string
+        config:
+          $ref: '#/components/schemas/RuleConfig'
+        updatedAt:
+          type: string
+          format: date-time
+    RuleUpdate:
+      type: object
+      required: [config]
+      properties:
+        config:
+          $ref: '#/components/schemas/RuleConfig'
+    RuleConfig:
+      type: object
+      additionalProperties: true
+      description: >-
+        Shape depends on the rule. brute-force - failureThreshold, windowMinutes, score.
+        off-hours - minBaselineLogons, minLogonsInHour, score. new-host - minBaselineLogons, score.
+      example:
+        minBaselineLogons: 20
+        minLogonsInHour: 1
+        score: 30
+    Problem:
+      type: object
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        errors:
+          type: object
+          additionalProperties:
+            type: string
+          description: Field-level messages, keyed by field path.

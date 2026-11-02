@@ -1,0 +1,60 @@
+spring:
+  application:
+    name: insider-signal
+  threads:
+    virtual:
+      enabled: true
+  mvc:
+    problemdetails:
+      enabled: true
+  datasource:
+    url: ${POSTGRES_URL:jdbc:postgresql://localhost:5432/insider_signal}
+    username: ${POSTGRES_USER:insider}
+    password: ${POSTGRES_PASSWORD:insider}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+    consumer:
+      group-id: insider-signal
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      max-poll-records: 500
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.value.default.type: com.insidersignal.event.WinEvent
+        spring.json.use.type.headers: false
+    listener:
+      type: batch
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+insider-signal:
+  kafka:
+    events-topic: win-events
+    events-partitions: 6
+  clickhouse:
+    url: ${CLICKHOUSE_URL:jdbc:clickhouse://localhost:8123/default}
+    username: ${CLICKHOUSE_USER:insider}
+    password: ${CLICKHOUSE_PASSWORD:insider}
+  detection:
+    max-event-age: PT24H
+  risk:
+    window: P7D
+  rules:
+    cache-ttl: PT10M

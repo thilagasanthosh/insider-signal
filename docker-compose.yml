@@ -1,0 +1,74 @@
+name: insider-signal
+
+# Only the app is published, on localhost: the API has no authentication (see README).
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    healthcheck:
+      test: /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 15s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8-alpine
+    environment:
+      CLICKHOUSE_USER: insider
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-insider}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: wget -q --spider http://127.0.0.1:8123/ping
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: insider_signal
+      POSTGRES_USER: insider
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-insider}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U insider -d insider_signal
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    ports:
+      - 127.0.0.1:8090:8080
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      POSTGRES_URL: jdbc:postgresql://postgres:5432/insider_signal
+      POSTGRES_USER: insider
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-insider}
+      CLICKHOUSE_URL: jdbc:clickhouse://clickhouse:8123/default
+      CLICKHOUSE_USER: insider
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-insider}
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+volumes:
+  clickhouse-data:
+  postgres-data:
