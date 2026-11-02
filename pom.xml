@@ -22,7 +22,7 @@
     <clickhouse-jdbc.version>0.11.0</clickhouse-jdbc.version>
     <openapi-generator.version>7.27.0</openapi-generator.version>
     <fmt-maven-plugin.version>2.29</fmt-maven-plugin.version>
-    <google-java-format.version>1.27.0</google-java-format.version>
+    <google-java-format.version>2.0.0</google-java-format.version>
   </properties>
 
   <dependencies>
